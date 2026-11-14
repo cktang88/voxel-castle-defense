@@ -3,6 +3,7 @@
 // the boxes inside the same group, so callers never wait.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export interface HeldModelSpec {
   /** file under public/models */
@@ -27,9 +28,19 @@ export const HELD_MODELS: Record<string, HeldModelSpec> = {
   cutter: { file: 'tripo-cutter.glb', length: 0.8, offset: [0, -0.02, 0.16], yaw: 0 },
 };
 
-/** same dark ink as the box models' outlines (entities.ts) */
-const OUTLINE = new THREE.MeshBasicMaterial({ color: 0x14101a, side: THREE.BackSide });
-const INK = 0.022; // outline thickness in gun-group units, like the box parts
+// The generated textures are dark metal that only reads with specular highlights and reflections (how
+// Tripo's previews are lit). The world has no environment map, so held models get their own: a small
+// studio room, prefiltered once on the first load.
+let studio: THREE.Texture | null = null;
+function studioEnv(): THREE.Texture | null {
+  if (studio) return studio;
+  const r = (window as unknown as { game?: { renderer?: THREE.WebGLRenderer } }).game?.renderer;
+  if (!r) return null;
+  const pm = new THREE.PMREMGenerator(r);
+  studio = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+  pm.dispose();
+  return studio;
+}
 
 const cache = new Map<string, Promise<THREE.Object3D | null>>();
 
@@ -40,18 +51,15 @@ function load(spec: HeldModelSpec): Promise<THREE.Object3D | null> {
       const root = gltf.scene;
       const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
       const k = spec.length / Math.max(size.x, size.y, size.z);
-      const meshes: THREE.Mesh[] = [];
-      root.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
-      for (const m of meshes) {
-        // Lambert like every other held part, lifted a little (as box parts are) so it reads at a distance
+      // satin metal under the studio environment, so edges and flats catch highlights like the previews.
+      // No ink outline (unlike the box models): an inverted hull pokes through these models' thin panels.
+      root.traverse((o) => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh) return;
         const src = m.material as THREE.MeshStandardMaterial;
-        m.material = new THREE.MeshLambertMaterial({ map: src.map, emissiveMap: src.map, emissive: 0x3a3a3a });
+        m.material = new THREE.MeshStandardMaterial({ map: src.map, metalness: 0.4, roughness: 0.5, envMap: studioEnv(), envMapIntensity: 0.6 });
         m.castShadow = true;
-        // ink outline: an inverted hull pushed out along the normals
-        const geo = m.geometry.clone(), pos = geo.attributes.position, nrm = geo.attributes.normal, d = INK / k;
-        for (let i = 0; i < pos.count; i++) pos.setXYZ(i, pos.getX(i) + nrm.getX(i) * d, pos.getY(i) + nrm.getY(i) * d, pos.getZ(i) + nrm.getZ(i) * d);
-        m.add(new THREE.Mesh(geo, OUTLINE));
-      }
+      });
       const pivot = new THREE.Group();
       root.position.copy(c).multiplyScalar(-1);
       pivot.add(root);

@@ -42,7 +42,9 @@ multipliers on the game's own leaf colour.
 task `c7acfbc8-4406-477b-a368-d605658fc1aa`, 2026-11-14) from the prompt "low poly stylized handgun
 pistol game asset, chunky simple shapes, grey metal slide, dark frame, brown wooden grip, clean
 flat-shaded". 877 triangles; its 2048² texture was downscaled to 512² JPEG. `src/heldModels.ts`
-loads it and swaps it in for the box-built pistol (which stays as the fallback).
+loads it and swaps it in for the box-built pistol (which stays as the fallback). Held models use a
+satin metal material lit by their own small studio environment map (three.js RoomEnvironment), as
+Tripo's previews are; plain diffuse shading left the dark metal textures nearly black.
 
 # SMG model
 
