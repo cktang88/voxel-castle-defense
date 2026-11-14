@@ -3,7 +3,6 @@
 // the boxes inside the same group, so callers never wait.
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 
 export interface HeldModelSpec {
   /** file under public/models */
@@ -28,19 +27,18 @@ export const HELD_MODELS: Record<string, HeldModelSpec> = {
   cutter: { file: 'tripo-cutter.glb', length: 0.8, offset: [0, -0.02, 0.16], yaw: 0 },
 };
 
-// The generated textures are dark metal that only reads with specular highlights and reflections (how
-// Tripo's previews are lit). The world has no environment map, so held models get their own: a small
-// studio room, prefiltered once on the first load.
-let studio: THREE.Texture | null = null;
-function studioEnv(): THREE.Texture | null {
-  if (studio) return studio;
-  const r = (window as unknown as { game?: { renderer?: THREE.WebGLRenderer } }).game?.renderer;
-  if (!r) return null;
-  const pm = new THREE.PMREMGenerator(r);
-  studio = pm.fromScene(new RoomEnvironment(), 0.04).texture;
-  pm.dispose();
-  return studio;
-}
+// Cel-shaded like Tripo's concept images: three flat light bands instead of smooth shading, a cool
+// slate tint lifted by the texture itself (the generated textures are dark), and ink lines on the
+// hard edges (EdgesGeometry, creases sharper than EDGE_ANGLE) to pick out panels and parts. An inverted
+// hull outline was tried and dropped: it pokes through these models' thin panels.
+const BANDS = (() => {
+  const t = new THREE.DataTexture(new Uint8Array([120, 120, 120, 255, 200, 200, 200, 255, 255, 255, 255, 255]), 3, 1);
+  t.minFilter = t.magFilter = THREE.NearestFilter;
+  t.needsUpdate = true;
+  return t;
+})();
+const INK = new THREE.LineBasicMaterial({ color: 0x14121a });
+const EDGE_ANGLE = 25; // degrees
 
 const cache = new Map<string, Promise<THREE.Object3D | null>>();
 
@@ -51,15 +49,14 @@ function load(spec: HeldModelSpec): Promise<THREE.Object3D | null> {
       const root = gltf.scene;
       const box = new THREE.Box3().setFromObject(root), size = box.getSize(new THREE.Vector3()), c = box.getCenter(new THREE.Vector3());
       const k = spec.length / Math.max(size.x, size.y, size.z);
-      // satin metal under the studio environment, so edges and flats catch highlights like the previews.
-      // No ink outline (unlike the box models): an inverted hull pokes through these models' thin panels.
-      root.traverse((o) => {
-        const m = o as THREE.Mesh;
-        if (!m.isMesh) return;
+      const meshes: THREE.Mesh[] = [];
+      root.traverse((o) => { if ((o as THREE.Mesh).isMesh) meshes.push(o as THREE.Mesh); });
+      for (const m of meshes) {
         const src = m.material as THREE.MeshStandardMaterial;
-        m.material = new THREE.MeshStandardMaterial({ map: src.map, metalness: 0.4, roughness: 0.5, envMap: studioEnv(), envMapIntensity: 0.6 });
+        m.material = new THREE.MeshToonMaterial({ map: src.map, gradientMap: BANDS, color: 0xdce4f4, emissiveMap: src.map, emissive: 0x606a7e, side: THREE.DoubleSide }); // some generated shells are open
         m.castShadow = true;
-      });
+        m.add(new THREE.LineSegments(new THREE.EdgesGeometry(m.geometry, EDGE_ANGLE), INK));
+      }
       const pivot = new THREE.Group();
       root.position.copy(c).multiplyScalar(-1);
       pivot.add(root);
